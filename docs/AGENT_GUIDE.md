@@ -121,11 +121,13 @@ custody stays in BTCPay; sweep job only references `COLD_WALLET_ADDRESS` string.
 
 ## 9. Remaining phases — precise TODO
 
-**PHASE 2 remainder (frontend):** storefront pages under apps/web/src/app/(ar): home (featured grid),
-category/product pages (fetch from API URLs above), client cart in localStorage + hydration guard,
-cart page calling /cart/validate + /coupons/check, checkout form → /orders/guest, payment picker page
-(currency/network from /rates/crypto), track-order page. Shared: Header/Footer/ProductCard/CartDrawer
-components, Tailwind RTL (logical properties), fetch wrapper NEXT_PUBLIC_API_URL.
+**PHASE 2 — ✅ DONE (commit 79ea66f).** Storefront shipped: home (hero/categories/featured/trust),
+/search + /category/[slug] (filter/sort/pagination via CatalogBrowser), /product/[slug] (purchase box +
+related), /cart (localStorage CartProvider w/ hydration guard, mirrors server normalizeCart limits),
+/checkout (guest email + coupon via /coupons/check → POST /orders/guest), /pay/[orderNo] bridge
+(coin/network preview from /rates/crypto; invoice creation intentionally stubbed until PHASE 3),
+/track (orderNo+email). Shared: providers.tsx (Header/Footer), product-card*, lib/{api,cart,types}.
+All routes call same-origin /backend/* rewrite (next.config.mjs → API_INTERNAL_URL).
 
 **PHASE 3 (payments):** BtcpayProvider + NowPaymentsProvider implementing the interface;
 POST /orders/:id/invoice {currency,network} → getRate → Redis lock `invoice:rate:<orderId>` TTL 15min +

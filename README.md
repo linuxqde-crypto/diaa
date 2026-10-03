@@ -20,7 +20,7 @@ BTCPay Server behind a `PaymentProviderInterface` (swappable with NOWPayments) �
 ```bash
 cp .env.example .env   # fill secrets (see comments inside)
 docker compose up -d --build
-# storefront → http://localhost      (RTL Arabic UI — Phase 2 frontend in progress)
+# storefront → http://localhost      (RTL Arabic UI — Phase 2 complete)
 # API        → http://localhost/api  (catalog, cart, guest orders, rates — see table below)
 # API docs   → http://localhost/api/docs
 # health     → http://localhost/api/../health  (compose readiness gate)
@@ -61,7 +61,7 @@ All inputs validated via class-validator DTOs (`whitelist + forbidNonWhitelisted
 
 ```
 apps/api        NestJS backend (Prisma schema/migrations/seed live here)
-apps/web        Next.js 14 storefront + admin panel (RTL shell ready; pages = Phase 2 remainder)
+apps/web        Next.js 14 storefront (Phase 2 ✅ RTL Arabic: catalog/cart/checkout/track/pay-bridge) + admin panel (Phase 4)
 deploy/         Caddyfile (TLS termination, /api → nest, / → next)
 scripts/        postgres-init.sql (pgcrypto,citext), backup.sh (pg_dump nightly rotation)
 .github/        CI: prisma validate+migrate+seed smoke test, api+web builds, compose config
@@ -73,7 +73,7 @@ docs/           AGENT_GUIDE.md (AI/engineer onboarding), ARCHITECTURE.md (paymen
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Repo structure, docker-compose, Prisma schema + migration, seed | ✅ `b5c5bea` |
-| 2 | Catalog API ✅ · cart validation ✅ · guest checkout ✅ · live rates ✅ — **RTL storefront pages remaining** | 🟡 backend done (commit `4f444f3`) |
+| 2 | Catalog API · cart validation · guest checkout · live rates · **full RTL Arabic storefront** (home/search/category/product/cart/checkout/pay-bridge/track) | ✅ `4f444f3` + `79ea66f` (`next build` clean, 9 routes) |
 | 3 | Crypto payment flow: rate lock (Redis TTL), BTCPay invoices, QR + countdown, signed webhooks, confirmations (BTC 3 / ETH 12 / TRON 20 / SOL 32), delivery, under/overpay/expiry edge cases | ⏳ |
 | 4 | Admin panel, CSV inventory import, audit viewer, refunds | ⏳ |
 | 5 | TOTP 2FA, global rate limits, backups cron, monitoring, tests | ⏳ |
