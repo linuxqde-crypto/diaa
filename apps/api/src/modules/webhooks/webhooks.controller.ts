@@ -1,11 +1,11 @@
-import { Controller, Headers, HttpCode, Logger, Post, RawBodyRequest, Req } from '@nestjs/common';
+import { Controller, Headers, HttpCode, Inject, Logger, Post, Req } from '@nestjs/common';
+import type { RawBodyRequest } from '@nestjs/common';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { PrismaService } from '../../common/prisma.service';
 import { AuditService } from '../../common/audit.service';
 import { PAYMENT_PROVIDER, PaymentProviderInterface } from '../../payment-providers/payment-provider.interface';
-import { Inject } from '@nestjs/common';
 import { PaymentService } from '../payments/payment.service';
 
 /**
@@ -29,7 +29,7 @@ export class WebhooksController {
   @HttpCode(200)
   @Throttle({ default: { limit: 60, ttl: 60_000 } })
   @ApiOperation({ summary: 'Webhook من BTCPay — تحقق توقيع ثم سجل خام ثم معالجة idempotent' })
-  async btcpay(@RawBodyRequest() req: RawBodyRequest<Request>, @Headers() headers: Record<string, string>) {
+  async btcpay(@Req() req: Request & { rawBody?: Buffer }, @Headers() headers: Record<string, string>) {
     const raw = req.rawBody?.toString('utf8') ?? JSON.stringify(req.body ?? {});
     const sigValid = this.provider.verifyWebhook(raw ?? '', headers);
 

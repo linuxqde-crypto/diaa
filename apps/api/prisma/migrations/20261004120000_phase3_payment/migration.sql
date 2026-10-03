@@ -7,6 +7,7 @@
 CREATE TABLE "invoice_access_tokens" (
   "id"         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   "invoice_id" uuid NOT NULL REFERENCES "invoices"("id") ON DELETE CASCADE,
+  "invoice_no" text NOT NULL,
   "token_hash" text NOT NULL UNIQUE,
   "expires_at" timestamptz NOT NULL,
   "created_at" timestamptz NOT NULL DEFAULT now()

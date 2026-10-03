@@ -32,6 +32,14 @@ export class PaymentsController {
     return this.payments.statusForToken(invoiceNo, q.token);
   }
 
+  @Get('orders/:orderNo/reveal')
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @ApiOperation({ summary: 'الكشف على الشاشة عن الأكواد بعد التسليم (orderNo + بريد الطلب كإثبات ملكية)' })
+  async reveal(@Param('orderNo') orderNo: string, @Query('email') email: string) {
+    if (!email || typeof email !== 'string') return { error: 'البريد الإلكتروني مطلوب' };
+    return this.payments.revealCodes(orderNo, email);
+  }
+
   @Post('invoices/:invoiceNo/requote')
   @Throttle({ default: { limit: 4, ttl: 60_000 } })
   @ApiOperation({ summary: 'إعادة تسعير فاتورة منتهية بسعر لحظي جديد (سجل requote مرتبط)' })

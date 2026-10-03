@@ -6,7 +6,7 @@
  *  (SELECT FOR UPDATE SKIP LOCKED) + email + on-screen reveal → g. underpaid/overpaid/expired edges.
  */
 import {
-  BadRequestException, ConflictException, ForbiddenException, Injectable, Logger, NotFoundException,
+  BadRequestException, ConflictException, ForbiddenException, Inject, Injectable, Logger, NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash, randomBytes } from 'node:crypto';
