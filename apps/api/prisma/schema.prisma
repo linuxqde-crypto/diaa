@@ -306,6 +306,7 @@ model Invoice {
   updatedAt     DateTime @updatedAt
 
   webhookLogs WebhookLog[]
+  accessTokens InvoiceAccessToken[]
 
   @@index([orderId])
   @@index([status, expiresAt]) // expiry sweeper
@@ -325,11 +326,28 @@ model WebhookLog {
   processed   Boolean  @default(false)
   processError String?
   idempotencyKey String? @unique @map("idempotency_key") // provider event id
+  eventUid    String?  @unique @map("event_uid") // PHASE 3: replay detection (unique constraint)
   createdAt   DateTime @default(now())
 
   @@index([provider, createdAt])
   @@index([processed])
   @@map("webhook_logs")
+}
+
+// ─────────────────────────── PAYMENT PAGE ACCESS (PHASE 3) ───────────────────────────
+
+/// SHA-256 hash of the one-time secret token returned when an invoice is created.
+/// Gates the QR/countdown/status endpoints so a leaked orderNo cannot expose payment state.
+model InvoiceAccessToken {
+  id        String   @id @default(uuid())
+  invoiceId String   @map("invoice_id")
+  invoice   Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique @map("token_hash")
+  expiresAt DateTime @map("expires_at") // mirrors rate lock window (+ grace for polling)
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([invoiceId])
+  @@map("invoice_access_tokens")
 }
 
 // ─────────────────────────── MARKETING / CONFIG / AUDIT ───────────────────────────
