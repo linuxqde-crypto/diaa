@@ -1,0 +1,6 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html { direction: rtl; }
+body { @apply bg-slate-50 text-slate-900 font-arabic antialiased; }

@@ -1,0 +1,401 @@
+// KROTO — Crypto-Paid Digital Gift Card Store
+// Prisma schema — PHASE 1
+// PostgreSQL 16. All monetary values are stored as Decimal to avoid float drift.
+// Secret inventory codes are AES-256-GCM encrypted at rest (ciphertext in `codeEncrypted`).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────── ENUMS ───────────────────────────
+
+enum UserRole {
+  CUSTOMER
+  ADMIN
+  SUPER_ADMIN
+}
+
+enum OrderStatus {
+  PENDING // created, awaiting payment
+  PAID // payment confirmed by provider (enough confirmations)
+  DELIVERED // code revealed + emailed to buyer
+  CANCELLED
+  REFUND_REQUESTED
+  REFUNDED
+  UNDERPAID // on-chain amount < locked fiat/crypto amount
+  EXPIRED // invoice TTL elapsed without payment
+}
+
+enum InvoiceStatus {
+  PENDING
+  PAID // full amount received, awaiting/with required confirmations
+  UNDERPAID
+  OVERPAID
+  EXPIRED
+  CONFIRMED // enough confirmations reached -> order may be fulfilled
+  REFUND_ISSUED
+}
+
+enum CryptoCurrency {
+  BTC
+  ETH
+  USDT
+  SOL
+  BNB
+}
+
+enum Network {
+  BTC // bitcoin mainnet
+  ETH // ethereum (ERC20)
+  TRON // tron (TRC20)
+  SOLANA
+  BNB_CHAIN // binance smart chain (BEP20)
+}
+
+enum InventoryCodeStatus {
+  AVAILABLE
+  RESERVED // atomically allocated to a confirmed order (SELECT ... FOR UPDATE)
+  SOLD // delivered to customer
+  VOID // bad/expired code removed from circulation
+}
+
+enum CouponType {
+  PERCENT
+  FIXED_USD
+}
+
+enum AuditAction {
+  ORDER_CREATED
+  ORDER_PAID
+  ORDER_DELIVERED
+  ORDER_CANCELLED
+  INVOICE_CREATED
+  RATE_LOCKED
+  PAYMENT_RECEIVED
+  PAYMENT_UNDERPAID
+  PAYMENT_OVERPAID
+  INVOICE_EXPIRED
+  CODE_ALLOCATED
+  CODE_SOLD
+  CODE_IMPORTED
+  REFUND_INITIATED
+  REFUND_COMPLETED
+  COUPON_APPLIED
+  COUPON_CREATED
+  COUPON_DELETED
+  PRODUCT_CREATED
+  PRODUCT_UPDATED
+  PRODUCT_DELETED
+  INVENTORY_ADJUSTED
+  SETTINGS_UPDATED
+  WALLET_SWEEP
+  ADMIN_LOGIN
+  ADMIN_LOGIN_FAILED
+  WEBHOOK_RECEIVED
+  USER_CREATED
+}
+
+// ─────────────────────────── AUTH / USERS ───────────────────────────
+
+model User {
+  id            String    @id @default(uuid())
+  email         String    @unique
+  passwordHash  String? // null for guest-linked accounts created post-checkout
+  fullNameAr    String?
+  fullNameEn    String?
+  role          UserRole  @default(CUSTOMER)
+  isGuest       Boolean   @default(false)
+
+  // TOTP 2FA (admin only). We store the base32 secret encrypted at rest;
+  // the plaintext shared secret never touches logs.
+  totpSecretEnc String?
+  totpEnabled   Boolean   @default(false)
+  totpConfirmed Boolean   @default(false)
+
+  creditUsd     Decimal   @default(0) @map("credit_usd") @db.Decimal(12, 2) // overpayment store credit
+  failedLogins  Int       @default(0)
+  lockedUntil   DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  orders        Order[]
+  refreshTokens RefreshToken[]
+  auditLogs     AuditLog[]   @relation("AuditActor")
+
+  @@index([role])
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String   @unique // sha256 of the opaque token — raw token never stored
+  userAgent String?
+  ip        String?
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("refresh_tokens")
+}
+
+// ─────────────────────────── CATALOG ───────────────────────────
+
+model Category {
+  id           String   @id @default(uuid())
+  slug         String   @unique
+  nameAr       String
+  nameEn       String
+  descriptionAr String?
+  icon         String? // lucide icon name or emoji
+  sortOrder    Int      @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  categoryId  String
+  category    Category @relation(fields: [categoryId], references: [id])
+  slug        String   @unique
+  brand       String // e.g. "Steam", "Google Play", "Netflix"
+  nameAr      String
+  nameEn      String
+  descriptionAr String?
+  descriptionEn String?
+  priceUsd    Decimal  @map("price_usd") @db.Decimal(12, 2) // base USD price
+  compareAtUsd Decimal? @map("compare_at_usd") @db.Decimal(12, 2)
+  imageUrls   String[] @default([])
+  networkHints Network[] @default([]) // networks this card can be bought with
+  isFeatured  Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  lowStockThreshold Int @default(5) // alert admin when available codes < this
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  inventory InventoryCode[]
+  orderItems OrderItem[]
+  couponProducts ProductCoupon[]
+
+  @@index([categoryId, isActive])
+  @@index([brand])
+  @@map("products")
+}
+
+// Pre-loaded secret codes. NEVER returned via public APIs.
+// `codeEncrypted` holds AES-256-GCM ciphertext (iv|tag|ciphertext, base64).
+model InventoryCode {
+  id            String              @id @default(uuid())
+  productId     String
+  product       Product             @relation(fields: [productId], references: [id])
+  status        InventoryCodeStatus @default(AVAILABLE)
+  codeEncrypted String              @map("code_encrypted")
+  codeLast4     String              @map("code_last4") // display-safe tail for admin lists
+  batchId       String?             @map("batch_id") // CSV import batch
+  orderId       String?             @map("order_id") // denormalized: who consumed it
+  reservedAt    DateTime?
+  soldAt        DateTime?
+  createdAt     DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  // Availability lookup used by the allocator's SELECT ... FOR UPDATE SKIP LOCKED query.
+  @@index([productId, status])
+  @@index([batchId])
+  @@map("inventory_codes")
+}
+
+// ─────────────────────────── ORDERS ───────────────────────────
+
+model Order {
+  id          String      @id @default(uuid())
+  orderNo     String      @unique @map("order_no") // human-friendly KR-2026-XXXXXX
+  userId      String?
+  user        User?       @relation(fields: [userId], references: [id])
+  email       String // delivery email (guest checkout requires it)
+  status      OrderStatus @default(PENDING)
+  currency    String      @default("USD")
+  subtotalUsd Decimal     @map("subtotal_usd") @db.Decimal(12, 2)
+  discountUsd Decimal     @default(0) @map("discount_usd") @db.Decimal(12, 2)
+  totalUsd    Decimal     @map("total_usd") @db.Decimal(12, 2)
+  couponId    String?
+  coupon      Coupon?     @relation(fields: [couponId], references: [id])
+  deliveredAt DateTime?
+  cancelledAt DateTime?
+  cancelReason String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  items    OrderItem[]
+  invoices Invoice[]
+
+  @@index([email])
+  @@index([status, createdAt])
+  @@map("orders")
+}
+
+model OrderItem {
+  id           String  @id @default(uuid())
+  orderId      String
+  order        Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  productId    String
+  product      Product @relation(fields: [productId], references: [id])
+  quantity     Int
+  unitPriceUsd Decimal @map("unit_price_usd") @db.Decimal(12, 2)
+  // snapshot of product data at purchase time (catalog edits must not mutate history)
+  productNameAr String
+  productSlugSnapshot String @map("product_slug_snapshot")
+
+  // allocated codes (one per unit) — populated after payment confirmation
+  inventoryCodeIds String[] @default([]) @map("inventory_code_ids")
+
+  @@index([orderId])
+  @@index([productId])
+  @@map("order_items")
+}
+
+// ─────────────────────────── CRYPTO INVOICES ───────────────────────────
+
+model Invoice {
+  id            String        @id @default(uuid())
+  invoiceNo     String        @unique @map("invoice_no")
+  orderId       String
+  order         Order         @relation(fields: [orderId], references: [id])
+  status        InvoiceStatus @default(PENDING)
+
+  currency      CryptoCurrency
+  network       Network
+  provider      String        @default("btcpay") // "btcpay" | "nowpayments"
+  providerInvoiceId String?   @unique @map("provider_invoice_id")
+
+  amountUsd     Decimal       @map("amount_usd") @db.Decimal(12, 2)
+  // Rate LOCKED at invoice creation: 1 <currency> == rateUsd USD (inverse kept too)
+  rateUsd       Decimal       @map("rate_usd") @db.Decimal(18, 8)
+  cryptoAmount  Decimal       @map("crypto_amount") @db.Decimal(18, 8) // exact amount to send
+  paidAmount    Decimal?      @map("paid_amount") @db.Decimal(18, 8) // observed on-chain amount
+
+  rateLocked    Boolean       @default(false) @map("rate_locked")
+  rateExpiresAt DateTime      @map("rate_expires_at") // now + 15 min (mirrored in Redis TTL)
+
+  address       String? // deposit address from provider
+  paymentUri    String? // e.g. tron:TXyz...?amount=... (QR payload)
+  txHash        String?     @map("tx_hash")
+  confirmations Int         @default(0)
+  requiredConfirmations Int @map("required_confirmations") // BTC:3 ETH:12 TRON:20 SOL:32
+
+  expiresAt     DateTime // invoice expiry (countdown timer source of truth)
+  settledAt     DateTime?
+  // Edge-case bookkeeping
+  underpayDelta Decimal? @map("underpay_delta") @db.Decimal(18, 8)
+  overpayDelta  Decimal? @map("overpay_delta") @db.Decimal(18, 8)
+  refundAddress String?  @map("refund_address")
+  requoteOfId   String?  @map("requote_of_id") // new invoice issued after expiry
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  webhookLogs WebhookLog[]
+
+  @@index([orderId])
+  @@index([status, expiresAt]) // expiry sweeper
+  @@map("invoices")
+}
+
+// Raw, append-only record of every provider callback — replayable.
+model WebhookLog {
+  id          String   @id @default(uuid())
+  provider    String
+  eventType   String   @map("event_type")
+  invoiceId   String?
+  invoice     Invoice? @relation(fields: [invoiceId], references: [id])
+  headers     Json // signature headers (may be redacted pre-insert)
+  rawPayload  Json     @map("raw_payload")
+  signatureValid Boolean @map("signature_valid")
+  processed   Boolean  @default(false)
+  processError String?
+  idempotencyKey String? @unique @map("idempotency_key") // provider event id
+  createdAt   DateTime @default(now())
+
+  @@index([provider, createdAt])
+  @@index([processed])
+  @@map("webhook_logs")
+}
+
+// ─────────────────────────── MARKETING / CONFIG / AUDIT ───────────────────────────
+
+model Coupon {
+  id            String     @id @default(uuid())
+  code          String     @unique
+  type          CouponType
+  value         Decimal    @db.Decimal(12, 2) // percent (0-100) or fixed USD
+  maxRedemptions Int?
+  redeemedCount Int        @default(0)
+  minOrderUsd   Decimal?   @map("min_order_usd") @db.Decimal(12, 2)
+  startsAt      DateTime?
+  endsAt        DateTime?
+  isActive      Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  orders        Order[]
+  products      ProductCoupon[]
+
+  @@map("coupons")
+}
+
+// Optional scoping: restrict a coupon to specific products (empty relation = all products).
+model ProductCoupon {
+  couponId  String
+  productId String
+  coupon    Coupon  @relation(fields: [couponId], references: [id], onDelete: Cascade)
+  product   Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([couponId, productId])
+  @@map("product_coupons")
+}
+
+// Key/value runtime settings editable from the admin panel
+// (rates buffer %, confirmation thresholds overrides, Telegram toggle, wallet thresholds…).
+model Setting {
+  id        String   @id @default(uuid())
+  key       String   @unique // dot-namespaced, e.g. "payments.rate_lock_minutes"
+  value     Json
+  valueType String   @default("string") @map("value_type") // string|number|boolean|json
+  group     String   @default("general")
+  description String?
+  updatedBy String? // admin user id
+  updatedAt DateTime @updatedAt
+
+  @@map("settings")
+}
+
+// Immutable, append-only audit trail for every financial/admin action.
+// DB-level protection: no UPDATE/DELETE grants for the app role (see migration SQL).
+model AuditLog {
+  id         BigInt   @id @default(autoincrement())
+  actorId    String? // users.id (null = system)
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id])
+  actorEmail String?  @map("actor_email") // snapshot even if user deleted
+  action     AuditAction
+  entityType String   @map("entity_type") // order | invoice | product | code | setting …
+  entityId   String?  @map("entity_id")
+  metadata   Json? // before/after diffs, amounts, IP
+  ip         String?
+  userAgent String?
+  createdAt  DateTime @default(now())
+
+  @@index([action, createdAt])
+  @@index([entityType, entityId])
+  @@map("audit_logs")
+}

@@ -1,0 +1,34 @@
+# KROTO edge proxy — reverse proxy + auto HTTPS (Caddy handles certs when a real domain is set)
+{
+    email ${CADDY_EMAIL:?}
+}
+
+kroto.example.com, www.kroto.example.com {
+    encode gzip zstd
+
+    # API + webhooks (BTCPay Greenfield callbacks land here)
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+
+    # Next.js storefront + admin panel
+    handle {
+        reverse_proxy web:3000
+    }
+
+    security_headers {
+        FrameDeny true
+        XContentTypeOptions true
+        ReferrerPolicy strict-origin-when-cross-origin
+    }
+}
+
+# Local development without TLS: `localhost` site
+:80 {
+    handle /api/* {
+        reverse_proxy api:3001
+    }
+    handle {
+        reverse_proxy web:3000
+    }
+}

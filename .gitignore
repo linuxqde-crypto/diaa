@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.next/
+out/
+.env
+.env.local
+*.tsbuildinfo
+coverage/
+.DS_Store
+nest-cli.json.bak
