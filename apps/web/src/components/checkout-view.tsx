@@ -21,12 +21,19 @@ export default function CheckoutView() {
   const [couponCode, setCouponCode] = useState('');
   const [coupon, setCoupon] = useState<CouponResult | null>(null);
   const [quotes, setQuotes] = useState<CoinQuote[]>([]);
+  const [coinKey, setCoinKey] = useState('USDT:TRON'); // currency:network — default USDT-TRC20
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Live crypto reference rates (display only until PHASE 3 locks them per-invoice).
+  // Live crypto reference rates; the chosen pair's rate gets LOCKED for 15 min
+  // server-side when the invoice is created alongside the order (PHASE 3).
   useEffect(() => {
-    api.quotes().then(setQuotes).catch(() => {});
+    api.quotes().then((qs) => {
+      setQuotes(qs);
+      if (qs.length > 0 && !qs.some((q) => `${q.currency}:${q.network[0]}` === 'USDT:TRON')) {
+        setCoinKey(`${qs[0].currency}:${qs[0].network[0]}`);
+      }
+    }).catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -55,14 +62,20 @@ export default function CheckoutView() {
     }
     setBusy(true);
     try {
+      const [currency, network] = coinKey.split(':');
       const order: GuestOrderResult = await api.createGuestOrder({
         email,
         fullNameAr: fullNameAr.trim() || undefined,
         items: cartItems,
         couponCode: coupon?.valid ? coupon.coupon!.code : undefined,
+        currency,
+        network,
       });
-      // Hand off to the payment page (PHASE 3 wires invoice creation there).
+      // Order + invoice created atomically server-side (rate locked 15 min).
       sessionStorage.setItem('kroto.lastOrder', JSON.stringify({ ...order, email }));
+      if (order.invoice?.accessToken) {
+        sessionStorage.setItem(`kroto.inv.${order.orderNo}`, order.invoice.accessToken);
+      }
       clear();
       router.push(`/pay/${order.orderNo}`);
     } catch (e) {
@@ -74,6 +87,9 @@ export default function CheckoutView() {
   if (!ready) return <p className="py-16 text-center text-slate-400">جارٍ التحميل…</p>;
 
   const total = coupon?.valid ? coupon.totalUsd : subtotalUsd;
+  const [selCurrency, selNetwork] = coinKey.split(':');
+  const selQuote = quotes.find((q) => q.currency === selCurrency && q.network.includes(selNetwork));
+  const estimateCrypto = selQuote ? total * selQuote.perUsd : null;
 
   return (
     <div className="mx-auto grid max-w-5xl grid-cols-1 gap-8 px-4 py-8 lg:grid-cols-[1fr_360px]">
@@ -132,12 +148,51 @@ export default function CheckoutView() {
 
           {err && <p className="rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{err}</p>}
 
+          {/* Coin + network picker — rate gets locked for 15 min when the invoice is created */}
+          <div>
+            <span className="mb-2 block text-sm font-bold text-slate-700">اختر عملة الدفع والشبكة *</span>
+            {quotes.length === 0 ? (
+              <p className="rounded-xl bg-slate-50 px-3 py-2 text-xs text-slate-500">
+                جارٍ جلب الأسعار اللحظية… (يمكن المتابعة والاختيار من صفحة الدفع)
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                {quotes.flatMap((q) =>
+                  q.network.map((net) => {
+                    const key = `${q.currency}:${net}`;
+                    const active = coinKey === key;
+                    return (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setCoinKey(key)}
+                        dir="ltr"
+                        className={`rounded-xl border px-3 py-2 text-left text-sm transition ${
+                          active
+                            ? 'border-brand-500 bg-brand-50 font-extrabold text-brand-700 ring-2 ring-brand-500'
+                            : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300'
+                        }`}
+                      >
+                        <span className="block font-bold">{q.symbol}</span>
+                        <span className="block text-[11px] text-slate-400">{net}</span>
+                      </button>
+                    );
+                  }),
+                )}
+              </div>
+            )}
+          </div>
+
           <button
             onClick={submit}
-            disabled={busy || lines.length === 0}
+            disabled={busy || lines.length === 0 || quotes.length === 0}
             className="w-full rounded-xl bg-brand-600 py-3.5 text-lg font-extrabold text-white shadow hover:bg-brand-700 disabled:bg-slate-300"
           >
-            {busy ? 'جارٍ إنشاء الطلب…' : `متابعة للدفع بالكريبتو · ${fmtUsd(total)}`}
+            {busy
+              ? 'جارٍ إنشاء الطلب وتثبيت السعر…'
+              : estimateCrypto
+                ? `ادفع ≈${estimateCrypto.toFixed(4)} ${selQuote?.symbol ?? selCurrency} (${selNetwork}) · ${fmtUsd(total)}`
+                : `متابعة للدفع بالكريبتو · ${fmtUsd(total)}`}
           </button>
           <p className="text-center text-xs text-slate-400">
             بالمتابعة أنت توافق على أن الكود الرقمي غير قابل للاسترجاع بعد التسليم.

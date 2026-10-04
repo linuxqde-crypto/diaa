@@ -65,6 +65,8 @@ export interface GuestOrderResult {
   currency: string;
   items: { productId: string; name: string; quantity: number; unitPriceUsd: number }[];
   nextStep: string;
+  /** Present when the buyer picked coin/network at checkout (PHASE 3 auto-invoice). */
+  invoice?: InvoiceView;
 }
 
 export interface TrackResult {
@@ -83,4 +85,35 @@ export interface CoinQuote {
   symbol: string;
   usdPerUnit: number;
   perUsd: number;
+}
+
+/** Mirrors api PublicInvoice (+ one-time accessToken on creation). */
+export interface InvoiceView {
+  invoiceNo: string;
+  status: 'PENDING' | 'PAID' | 'UNDERPAID' | 'OVERPAID' | 'EXPIRED' | 'CONFIRMED' | 'REFUND_ISSUED';
+  currency: string;
+  network: string;
+  amountUsd: string;
+  rateUsd: string;
+  cryptoAmount: string;
+  paidAmount: string | null;
+  address: string | null;
+  paymentUri: string | null;
+  expiresAt: string;
+  rateExpiresAt: string;
+  confirmations: number;
+  requiredConfirmations: number;
+  txHash: string | null;
+  underpayDelta: string | null;
+  overpayDelta: string | null;
+  demoMode: boolean;
+  accessToken?: string;
+}
+
+export interface RevealResult {
+  ready: boolean;
+  status?: string;
+  message?: string;
+  orderNo?: string;
+  items?: { nameAr: string; quantity: number; codes: string[] }[];
 }

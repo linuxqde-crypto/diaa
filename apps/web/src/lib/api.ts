@@ -7,9 +7,11 @@ import type {
   CoinQuote,
   CouponResult,
   GuestOrderResult,
+  InvoiceView,
   Paged,
   ProductDetail,
   ProductListItem,
+  RevealResult,
   TrackResult,
 } from './types';
 
@@ -49,10 +51,40 @@ export const api = {
     fullNameAr?: string;
     items: { productId: string; quantity: number }[];
     couponCode?: string;
+    currency?: string;
+    network?: string;
   }) => req<GuestOrderResult>('/orders/guest', { method: 'POST', body: JSON.stringify(payload) }),
   track: (orderNo: string, email: string) =>
     req<TrackResult>(`/orders/track?orderNo=${encodeURIComponent(orderNo)}&email=${encodeURIComponent(email)}`),
   quotes: () => req<CoinQuote[]>('/rates/crypto'),
+
+  // ── PHASE 3: crypto payment flow ──────────────────────────────
+  createInvoice: (orderNo: string, currency: string, network: string) =>
+    req<InvoiceView>('/payments/invoices', {
+      method: 'POST',
+      body: JSON.stringify({ orderNo, currency, network }),
+    }),
+  invoiceStatus: (invoiceNo: string, token: string) =>
+    req<InvoiceView>(`/payments/invoices/${encodeURIComponent(invoiceNo)}?token=${encodeURIComponent(token)}`),
+  requote: (invoiceNo: string, token: string) =>
+    req<InvoiceView>(`/payments/invoices/${encodeURIComponent(invoiceNo)}/requote`, {
+      method: 'POST',
+      body: JSON.stringify({ token }),
+    }),
+  submitRefundAddress: (invoiceNo: string, token: string, refundAddress: string) =>
+    req<{ ok: boolean; message?: string; error?: string }>(
+      `/payments/invoices/${encodeURIComponent(invoiceNo)}/refund-address`,
+      { method: 'POST', body: JSON.stringify({ token, refundAddress }) },
+    ),
+  demoSettle: (invoiceNo: string, token: string) =>
+    req<{ ok: boolean; message?: string }>('/payments/demo/settle', {
+      method: 'POST',
+      body: JSON.stringify({ invoiceNo, token }),
+    }),
+  revealCodes: (orderNo: string, email: string) =>
+    req<RevealResult>(
+      `/payments/orders/${encodeURIComponent(orderNo)}/reveal?email=${encodeURIComponent(email)}`,
+    ),
 };
 
 /** Extract a readable Arabic error from unknown thrown values. */

@@ -4,17 +4,17 @@ import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { api, errText } from '@/lib/api';
 import { fmtUsd } from '@/lib/cart';
-import type { CoinQuote, GuestOrderResult } from '@/lib/types';
+import InvoicePanel from './invoice-panel';
+import type { CoinQuote, GuestOrderResult, InvoiceView } from '@/lib/types';
 
 interface Stashed extends GuestOrderResult {
   email: string;
 }
 
 /**
- * PHASE 2 bridge page: shows the created order and a coin/network preview.
- * PHASE 3 replaces the "إنشاء فاتورة" button with POST /payments/invoices →
- * rate locked 15 min in Redis, provider invoice (unique address + exact amount),
- * QR code + live countdown + webhook-driven confirmation tracker.
+ * PHASE 3 payment page: coin/network picker → POST /payments/invoices
+ * (rate locked 15 min in Redis + DB) → QR + exact amount + live countdown +
+ * webhook-driven confirmation tracker + on-screen reveal after delivery.
  */
 export default function PayView({ orderNo }: { orderNo: string }) {
   const [order, setOrder] = useState<Stashed | null>(null);
@@ -22,13 +22,19 @@ export default function PayView({ orderNo }: { orderNo: string }) {
   const [quotes, setQuotes] = useState<CoinQuote[]>([]);
   const [selected, setSelected] = useState<string>('USDT:TRON');
   const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [invoice, setInvoice] = useState<InvoiceView | null>(null);
 
   useEffect(() => {
     try {
       const raw = sessionStorage.getItem('kroto.lastOrder');
       if (raw) {
         const o = JSON.parse(raw) as Stashed;
-        if (o.orderNo === orderNo) setOrder(o);
+        if (o.orderNo === orderNo) {
+          setOrder(o);
+          // Checkout already auto-created the invoice (coin picked at checkout).
+          if (o.invoice) setInvoice(o.invoice);
+        }
       }
     } catch {
       /* ignore malformed stash */
@@ -53,6 +59,24 @@ export default function PayView({ orderNo }: { orderNo: string }) {
   }, [orderNo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const coin = quotes.find((q) => `${q.currency}:${q.network[0]}` === selected) ?? quotes[0];
+
+  const createInvoice = async () => {
+    setErr(null);
+    const [currency, network] = selected.split(':');
+    if (!currency || !network) {
+      setErr('اختر عملة وشبكة الدفع أولًا.');
+      return;
+    }
+    setBusy(true);
+    try {
+      const inv = await api.createInvoice(orderNo, currency, network);
+      setInvoice(inv);
+    } catch (e) {
+      setErr(errText(e));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   if (notFound) {
     return (
@@ -96,7 +120,8 @@ export default function PayView({ orderNo }: { orderNo: string }) {
         </p>
       </div>
 
-      {/* Coin picker (live reference rates; final locked quote comes with the invoice in PHASE 3) */}
+      {/* Coin picker — hidden once an invoice exists (its network/amount are locked). */}
+      {!invoice && (
       <div className="mt-6 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
         <h2 className="font-extrabold text-slate-800">اختر عملة وشبكة الدفع</h2>
         <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
@@ -134,13 +159,19 @@ export default function PayView({ orderNo }: { orderNo: string }) {
         {err && <p className="mt-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{err}</p>}
 
         <button
-          onClick={() => setErr('إنشاء الفاتورة بالدفع الفعلي يصل مع المرحلة الثالثة (BTCPay + QR + عدّاد تنازلي). الطلب محفوظ الآن ولا يلزمك إعادة الشراء.')}
-          className="mt-5 w-full rounded-xl bg-brand-600 py-3.5 text-lg font-extrabold text-white shadow hover:bg-brand-700"
+          onClick={createInvoice}
+          disabled={busy || !coin}
+          className="mt-5 w-full rounded-xl bg-brand-600 py-3.5 text-lg font-extrabold text-white shadow hover:bg-brand-700 disabled:opacity-60"
         >
-          🪙 إنشاء فاتورة الكريبتو
+          {busy ? 'جارٍ تثبيت السعر وإنشاء الفاتورة…' : '🪙 إنشاء فاتورة الكريبتو (سعر مثبَّت 15 دقيقة)'}
         </button>
-        {err && <p className="mt-3 rounded-xl border border-dashed border-amber-400 bg-amber-50 p-3 text-sm text-amber-900">{err}</p>}
       </div>
+      )}
+
+      {/* PHASE 3: invoice panel — QR + exact amount + countdown + confirmations + reveal */}
+      {invoice && order && <InvoicePanel invoice={invoice} orderNo={orderNo} email={order.email} />}
+
+      {err && invoice && <p className="mt-3 rounded-xl bg-rose-50 p-3 text-sm font-bold text-rose-700">{err}</p>}
 
       <div className="mt-6 flex items-center justify-between text-sm">
         <Link href="/" className="font-bold text-brand-600 hover:underline">← متابعة التسوق</Link>

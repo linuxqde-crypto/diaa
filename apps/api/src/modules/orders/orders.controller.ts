@@ -3,19 +3,23 @@ import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import { Request } from 'express';
 import { CartService } from '../cart/cart.service';
+import { PaymentService } from '../payments/payment.service';
 import { CreateGuestOrderDto } from './dto/create-guest-order.dto';
 import { mapPrismaError } from '../../common/prisma-error';
 
 @ApiTags('orders')
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly cart: CartService) {}
+  constructor(
+    private readonly cart: CartService,
+    private readonly payments: PaymentService,
+  ) {}
 
   @Post('guest')
   @Throttle({ default: { limit: 5, ttl: 60_000 } }) // checkout abuse protection
   @ApiOperation({
     summary:
-      'إنشاء طلب ضيف (بريد + سلة + كوبون اختياري) — يتحقق من المخزون، يحسب الخصم من DB، يسجّل ORDER_CREATED في سجل التدقيق. لا يحجز أكوادًا قبل الدفع.',
+      'إنشاء طلب ضيف (بريد + سلة + عملة/شبكة الدفع) — يتحقق من المخزون، يحسب الخصم من DB، يسجّل ORDER_CREATED في سجل التدقيق. لا يحجز أكوادًا قبل الدفع. عند اختيار العملة يُنشأ فورًا فاتورة كريبتو بسعر مثبَّت 15 دقيقة.',
   })
   async createGuest(@Body() dto: CreateGuestOrderDto, @Req() req: Request) {
     try {
@@ -27,6 +31,24 @@ export class OrdersController {
         ip: req.ip,
         userAgent: req.headers['user-agent']?.slice(0, 200),
       });
+
+      // PHASE 3: coin/network chosen at checkout → auto-create the invoice now
+      // (rate locked 15 min in Redis + DB). Failure never loses the order —
+      // the buyer can retry invoice creation from /pay/:orderNo.
+      let invoice: Awaited<ReturnType<PaymentService['createInvoice']>> | null = null;
+      if (dto.currency && dto.network) {
+        try {
+          invoice = await this.payments.createInvoice({
+            orderNo: order.orderNo,
+            currency: dto.currency,
+            network: dto.network,
+            ip: req.ip,
+          });
+        } catch {
+          invoice = null; // order stays PENDING; pay page offers "إنشاء فاتورة" retry
+        }
+      }
+
       return {
         orderId: order.id,
         orderNo: order.orderNo,
@@ -41,7 +63,7 @@ export class OrdersController {
           quantity: i.quantity,
           unitPriceUsd: Number(i.unitPriceUsd),
         })),
-        // PHASE 3: paymentUrl will point at the coin/network picker + invoice page.
+        ...(invoice ? { invoice } : {}),
         nextStep: 'payment',
       };
     } catch (e) {

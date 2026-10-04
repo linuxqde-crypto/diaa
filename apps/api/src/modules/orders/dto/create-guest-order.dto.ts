@@ -4,6 +4,7 @@ import {
   ArrayMinSize,
   IsArray,
   IsEmail,
+  IsEnum,
   IsInt,
   IsOptional,
   IsString,
@@ -13,6 +14,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { CryptoCurrency, Network } from '@prisma/client';
 import { CartDto } from '../../cart/dto/cart.dto';
 
 export class GuestCheckoutItemDto {
@@ -50,4 +52,13 @@ export class CreateGuestOrderDto {
   @IsString()
   @Matches(/^[A-Z0-9_-]{3,32}$/i, { message: 'رمز خصم غير صالح' })
   couponCode?: string;
+
+  /** PHASE 3: coin/network chosen at checkout → the order auto-creates its invoice (rate locked 15 min). */
+  @IsOptional()
+  @IsEnum(CryptoCurrency)
+  currency?: CryptoCurrency;
+
+  @IsOptional()
+  @IsEnum(Network)
+  network?: Network;
 }
